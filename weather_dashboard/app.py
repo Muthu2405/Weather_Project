@@ -1,11 +1,11 @@
 """
 app.py
 ------
-Flask web server that serves the weather dashboard.
-Exposes REST API endpoints for the frontend to fetch live data.
+Flask web server with city selector support.
+All API endpoints accept an optional ?city= query parameter.
 """
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import os
@@ -26,8 +26,6 @@ def get_engine():
     db_port     = int(os.getenv("DB_PORT") or "5432")
     db_name     = os.getenv("DB_NAME", "weather_db")
     logger.info(f"Connecting → {db_user}@{db_host}:{db_port}/{db_name}")
-
-    # Use SSL for cloud databases like Neon
     is_cloud = "neon.tech" in db_host or "amazonaws" in db_host
     url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
     if is_cloud:
@@ -35,7 +33,6 @@ def get_engine():
     return create_engine(url)
 
 
-# ── Global error handler — always return JSON, never HTML ──
 @app.errorhandler(Exception)
 def handle_exception(e):
     logger.error(f"Unhandled error: {e}", exc_info=True)
@@ -49,31 +46,48 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/api/debug")
-def api_debug():
-    """Diagnostic endpoint — shows what .env values are loaded."""
-    return jsonify({
-        "DB_USER":  os.getenv("DB_USER", "NOT SET"),
-        "DB_HOST":  os.getenv("DB_HOST", "NOT SET"),
-        "DB_PORT":  os.getenv("DB_PORT", "NOT SET"),
-        "DB_NAME":  os.getenv("DB_NAME", "NOT SET"),
-        "DB_PASSWORD": "SET" if os.getenv("DB_PASSWORD") else "NOT SET",
-    })
+@app.route("/api/cities")
+def api_cities():
+    """Return list of all available cities in the database."""
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT DISTINCT city
+                FROM weather
+                ORDER BY city ASC
+            """)).fetchall()
+        return jsonify([r.city for r in rows])
+    except Exception as e:
+        logger.error(f"/api/cities error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/latest")
 def api_latest():
+    """Return most recent weather record. Filter by ?city=Chennai"""
     try:
+        city = request.args.get("city", None)
         engine = get_engine()
         with engine.connect() as conn:
-            row = conn.execute(text("""
-                SELECT date, city, temp_max, temp_min, temp_avg,
-                       precipitation, wind_speed_max, humidity_avg,
-                       is_rainy, condition
-                FROM weather
-                ORDER BY date DESC
-                LIMIT 1
-            """)).fetchone()
+            if city:
+                row = conn.execute(text("""
+                    SELECT date, city, temp_max, temp_min, temp_avg,
+                           precipitation, wind_speed_max, humidity_avg,
+                           is_rainy, condition
+                    FROM weather
+                    WHERE city = :city
+                    ORDER BY date DESC LIMIT 1
+                """), {"city": city}).fetchone()
+            else:
+                row = conn.execute(text("""
+                    SELECT date, city, temp_max, temp_min, temp_avg,
+                           precipitation, wind_speed_max, humidity_avg,
+                           is_rainy, condition
+                    FROM weather
+                    ORDER BY date DESC LIMIT 1
+                """)).fetchone()
+
         if not row:
             return jsonify({"error": "No data found — run pipeline.py first"}), 404
         return jsonify({
@@ -95,16 +109,29 @@ def api_latest():
 
 @app.route("/api/forecast")
 def api_forecast():
+    """Return 7-day forecast. Filter by ?city=Chennai"""
     try:
+        city = request.args.get("city", None)
         engine = get_engine()
         with engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT date, temp_max, temp_min, temp_avg,
-                       precipitation, wind_speed_max, humidity_avg,
-                       is_rainy, condition
-                FROM weather
-                ORDER BY date ASC
-            """)).fetchall()
+            if city:
+                rows = conn.execute(text("""
+                    SELECT date, temp_max, temp_min, temp_avg,
+                           precipitation, wind_speed_max, humidity_avg,
+                           is_rainy, condition
+                    FROM weather
+                    WHERE city = :city
+                    ORDER BY date ASC
+                """), {"city": city}).fetchall()
+            else:
+                rows = conn.execute(text("""
+                    SELECT date, temp_max, temp_min, temp_avg,
+                           precipitation, wind_speed_max, humidity_avg,
+                           is_rainy, condition
+                    FROM weather
+                    ORDER BY date ASC
+                """)).fetchall()
+
         return jsonify([{
             "date":          str(r.date),
             "temp_max":      r.temp_max,
@@ -123,20 +150,37 @@ def api_forecast():
 
 @app.route("/api/stats")
 def api_stats():
+    """Return aggregate stats. Filter by ?city=Chennai"""
     try:
+        city = request.args.get("city", None)
         engine = get_engine()
         with engine.connect() as conn:
-            row = conn.execute(text("""
-                SELECT
-                    MAX(temp_max)                                    AS highest_temp,
-                    MIN(temp_min)                                    AS lowest_temp,
-                    MAX(precipitation)                               AS max_rain,
-                    MAX(wind_speed_max)                              AS max_wind,
-                    ROUND(AVG(humidity_avg)::numeric, 1)             AS avg_humidity,
-                    COUNT(*) FILTER (WHERE is_rainy)                 AS rainy_days,
-                    COUNT(*)                                         AS total_days
-                FROM weather
-            """)).fetchone()
+            if city:
+                row = conn.execute(text("""
+                    SELECT
+                        MAX(temp_max)                                AS highest_temp,
+                        MIN(temp_min)                                AS lowest_temp,
+                        MAX(precipitation)                           AS max_rain,
+                        MAX(wind_speed_max)                          AS max_wind,
+                        ROUND(AVG(humidity_avg)::numeric, 1)         AS avg_humidity,
+                        COUNT(*) FILTER (WHERE is_rainy)             AS rainy_days,
+                        COUNT(*)                                     AS total_days
+                    FROM weather
+                    WHERE city = :city
+                """), {"city": city}).fetchone()
+            else:
+                row = conn.execute(text("""
+                    SELECT
+                        MAX(temp_max)                                AS highest_temp,
+                        MIN(temp_min)                                AS lowest_temp,
+                        MAX(precipitation)                           AS max_rain,
+                        MAX(wind_speed_max)                          AS max_wind,
+                        ROUND(AVG(humidity_avg)::numeric, 1)         AS avg_humidity,
+                        COUNT(*) FILTER (WHERE is_rainy)             AS rainy_days,
+                        COUNT(*)                                     AS total_days
+                    FROM weather
+                """)).fetchone()
+
         return jsonify({
             "highest_temp": row.highest_temp,
             "lowest_temp":  row.lowest_temp,
@@ -149,6 +193,17 @@ def api_stats():
     except Exception as e:
         logger.error(f"/api/stats error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/debug")
+def api_debug():
+    return jsonify({
+        "DB_USER":  os.getenv("DB_USER", "NOT SET"),
+        "DB_HOST":  os.getenv("DB_HOST", "NOT SET"),
+        "DB_PORT":  os.getenv("DB_PORT", "NOT SET"),
+        "DB_NAME":  os.getenv("DB_NAME", "NOT SET"),
+        "DB_PASSWORD": "SET" if os.getenv("DB_PASSWORD") else "NOT SET",
+    })
 
 
 if __name__ == "__main__":
