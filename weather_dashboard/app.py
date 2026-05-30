@@ -26,7 +26,12 @@ def get_engine():
     db_port     = int(os.getenv("DB_PORT") or "5432")
     db_name     = os.getenv("DB_NAME", "weather_db")
     logger.info(f"Connecting → {db_user}@{db_host}:{db_port}/{db_name}")
+
+    # Use SSL for cloud databases like Neon
+    is_cloud = "neon.tech" in db_host or "amazonaws" in db_host
     url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+    if is_cloud:
+        url += "?sslmode=require"
     return create_engine(url)
 
 
