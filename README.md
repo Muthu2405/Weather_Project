@@ -280,8 +280,8 @@ DB_NAME     = neondb
 
 ## 👤 Author
 
-Muthukumar — Beginner Data Engineer  
-Ramya — Software Developer
+Muthukumar
+Ramya
 Built as a portfolio project to learn data engineering fundamentals.
 
 ---
