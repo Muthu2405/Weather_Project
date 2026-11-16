@@ -145,11 +145,12 @@ def load_weather(df: pd.DataFrame, engine) -> int:
 
 # --- Run this file directly to test the load step ---
 if __name__ == "__main__":
-    from extract import fetch_weather, CITY_CONFIG
+    from extract import fetch_weather, CITIES
     from transform import transform_weather
 
-    raw_data = fetch_weather(CITY_CONFIG)
-    df = transform_weather(raw_data, CITY_CONFIG["name"])
+    city = CITIES[0]
+    raw_data = fetch_weather(city)
+    df = transform_weather(raw_data, city["name"])
 
     engine = get_db_engine()
     create_table_if_not_exists(engine)

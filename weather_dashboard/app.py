@@ -114,23 +114,25 @@ def api_forecast():
         city = request.args.get("city", None)
         engine = get_engine()
         with engine.connect() as conn:
-            if city:
-                rows = conn.execute(text("""
+            if not city:
+                first_city = conn.execute(text("SELECT city FROM weather ORDER BY date DESC, city ASC LIMIT 1")).fetchone()
+                city = first_city.city if first_city else None
+
+            if not city:
+                return jsonify([])
+
+            rows = conn.execute(text("""
+                SELECT * FROM (
                     SELECT date, temp_max, temp_min, temp_avg,
                            precipitation, wind_speed_max, humidity_avg,
                            is_rainy, condition
                     FROM weather
                     WHERE city = :city
-                    ORDER BY date ASC
-                """), {"city": city}).fetchall()
-            else:
-                rows = conn.execute(text("""
-                    SELECT date, temp_max, temp_min, temp_avg,
-                           precipitation, wind_speed_max, humidity_avg,
-                           is_rainy, condition
-                    FROM weather
-                    ORDER BY date ASC
-                """)).fetchall()
+                    ORDER BY date DESC
+                    LIMIT 7
+                ) sub
+                ORDER BY date ASC
+            """), {"city": city}).fetchall()
 
         return jsonify([{
             "date":          str(r.date),
@@ -181,14 +183,18 @@ def api_stats():
                     FROM weather
                 """)).fetchone()
 
+        avg_hum = float(row.avg_humidity) if (row and row.avg_humidity is not None) else 0.0
+        rainy = row.rainy_days if (row and row.rainy_days is not None) else 0
+        total = row.total_days if (row and row.total_days is not None) else 0
+
         return jsonify({
-            "highest_temp": row.highest_temp,
-            "lowest_temp":  row.lowest_temp,
-            "max_rain":     row.max_rain,
-            "max_wind":     row.max_wind,
-            "avg_humidity": float(row.avg_humidity),
-            "rainy_days":   row.rainy_days,
-            "total_days":   row.total_days,
+            "highest_temp": row.highest_temp if row else None,
+            "lowest_temp":  row.lowest_temp if row else None,
+            "max_rain":     row.max_rain if row else None,
+            "max_wind":     row.max_wind if row else None,
+            "avg_humidity": avg_hum,
+            "rainy_days":   rainy,
+            "total_days":   total,
         })
     except Exception as e:
         logger.error(f"/api/stats error: {e}", exc_info=True)

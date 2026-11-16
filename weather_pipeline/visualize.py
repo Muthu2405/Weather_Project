@@ -5,6 +5,13 @@ Generates charts and visualizations from the weather database.
 Creates 4 charts: Temperature trend, Precipitation, Wind Speed, Dashboard.
 """
 
+import os
+import tempfile
+os.environ.setdefault("MPLCONFIGDIR", tempfile.gettempdir())
+
+import matplotlib
+matplotlib.use("Agg")
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -25,24 +32,35 @@ plt.rcParams.update({
 })
 
 
-def fetch_data_for_charts(engine) -> pd.DataFrame:
+def fetch_data_for_charts(engine, city: str = None) -> pd.DataFrame:
     """
-    Fetch all weather records from DB for visualization.
+    Fetch weather records from DB for visualization.
+    Filters by city (defaulting to the first city in DB) to avoid multi-city collision.
 
     Args:
         engine: SQLAlchemy engine
+        city (str, optional): City name to filter by
 
     Returns:
         pd.DataFrame: Weather data sorted by date
     """
     with engine.connect() as conn:
-        df = pd.read_sql(text("SELECT * FROM weather ORDER BY date ASC"), conn)
+        if not city:
+            first = conn.execute(text("SELECT city FROM weather ORDER BY date DESC, city ASC LIMIT 1")).fetchone()
+            city = first.city if first else None
+
+        if not city:
+            return pd.DataFrame()
+
+        df = pd.read_sql(text("SELECT * FROM weather WHERE city = :city ORDER BY date ASC"), conn, params={"city": city})
+
     df["date"] = pd.to_datetime(df["date"])
     return df
 
 
 def chart_temperature(df: pd.DataFrame):
     """Line chart: Max, Avg, Min temperature over time."""
+    city_name = df["city"].iloc[0] if "city" in df.columns and not df.empty else ""
     fig, ax = plt.subplots(figsize=(12, 5))
 
     ax.plot(df["date"], df["temp_max"], label="Max Temp", color="#e74c3c", linewidth=2, marker="o")
@@ -50,7 +68,7 @@ def chart_temperature(df: pd.DataFrame):
     ax.plot(df["date"], df["temp_min"], label="Min Temp", color="#3498db", linewidth=2, marker="^")
     ax.fill_between(df["date"], df["temp_min"], df["temp_max"], alpha=0.1, color="#e74c3c")
 
-    ax.set_title("🌡️  Temperature Trend Over Time", fontsize=16, fontweight="bold", pad=15)
+    ax.set_title(f"🌡️  Temperature Trend Over Time — {city_name}", fontsize=16, fontweight="bold", pad=15)
     ax.set_xlabel("Date", fontsize=12)
     ax.set_ylabel("Temperature (°C)", fontsize=12)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
@@ -59,11 +77,12 @@ def chart_temperature(df: pd.DataFrame):
     plt.tight_layout()
     plt.savefig("chart_temperature.png", dpi=150, bbox_inches="tight")
     logger.info("Saved: chart_temperature.png")
-    plt.show()
+    plt.close(fig)
 
 
 def chart_precipitation(df: pd.DataFrame):
     """Bar chart: Daily precipitation."""
+    city_name = df["city"].iloc[0] if "city" in df.columns and not df.empty else ""
     fig, ax = plt.subplots(figsize=(12, 5))
 
     colors = ["#2980b9" if r else "#aed6f1" for r in df["is_rainy"]]
@@ -75,7 +94,7 @@ def chart_precipitation(df: pd.DataFrame):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.1,
                     f"{val:.1f}", ha="center", va="bottom", fontsize=9)
 
-    ax.set_title("🌧️  Daily Precipitation (mm)", fontsize=16, fontweight="bold", pad=15)
+    ax.set_title(f"🌧️  Daily Precipitation (mm) — {city_name}", fontsize=16, fontweight="bold", pad=15)
     ax.set_xlabel("Date", fontsize=12)
     ax.set_ylabel("Precipitation (mm)", fontsize=12)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
@@ -89,11 +108,12 @@ def chart_precipitation(df: pd.DataFrame):
     plt.tight_layout()
     plt.savefig("chart_precipitation.png", dpi=150, bbox_inches="tight")
     logger.info("Saved: chart_precipitation.png")
-    plt.show()
+    plt.close(fig)
 
 
 def chart_wind_humidity(df: pd.DataFrame):
     """Dual-axis line chart: Wind speed and humidity over time."""
+    city_name = df["city"].iloc[0] if "city" in df.columns and not df.empty else ""
     fig, ax1 = plt.subplots(figsize=(12, 5))
 
     # Wind speed on left axis
@@ -109,7 +129,7 @@ def chart_wind_humidity(df: pd.DataFrame):
     ax2.set_ylabel("Humidity (%)", color="#27ae60", fontsize=12)
     ax2.tick_params(axis="y", labelcolor="#27ae60")
 
-    ax1.set_title("💨  Wind Speed & Humidity Over Time", fontsize=16, fontweight="bold", pad=15)
+    ax1.set_title(f"💨  Wind Speed & Humidity Over Time — {city_name}", fontsize=16, fontweight="bold", pad=15)
     ax1.set_xlabel("Date", fontsize=12)
     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
 
@@ -122,13 +142,14 @@ def chart_wind_humidity(df: pd.DataFrame):
     plt.tight_layout()
     plt.savefig("chart_wind_humidity.png", dpi=150, bbox_inches="tight")
     logger.info("Saved: chart_wind_humidity.png")
-    plt.show()
+    plt.close(fig)
 
 
 def chart_dashboard(df: pd.DataFrame):
     """Combined 2x2 dashboard with all metrics."""
+    city_name = df["city"].iloc[0] if "city" in df.columns and not df.empty else ""
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    fig.suptitle(f"🌤️  Weather Dashboard — {df['city'].iloc[0]}",
+    fig.suptitle(f"🌤️  Weather Dashboard — {city_name}",
                  fontsize=20, fontweight="bold", y=1.01)
 
     # --- Top Left: Temperature ---
@@ -169,19 +190,19 @@ def chart_dashboard(df: pd.DataFrame):
     plt.tight_layout()
     plt.savefig("chart_dashboard.png", dpi=150, bbox_inches="tight")
     logger.info("Saved: chart_dashboard.png")
-    plt.show()
+    plt.close(fig)
 
 
-def visualize():
+def visualize(city: str = None):
     """Run all visualizations."""
     engine = get_db_engine()
-    df = fetch_data_for_charts(engine)
+    df = fetch_data_for_charts(engine, city=city)
 
     if df.empty:
         logger.warning("No data found in the database. Run the pipeline first!")
         return
 
-    logger.info(f"Generating charts for {len(df)} records...")
+    logger.info(f"Generating charts for {df['city'].iloc[0]} ({len(df)} records)...")
     chart_temperature(df)
     chart_precipitation(df)
     chart_wind_humidity(df)
