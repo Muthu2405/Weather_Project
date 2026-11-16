@@ -6,6 +6,7 @@ All API endpoints accept an optional ?city= query parameter.
 """
 
 from flask import Flask, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import os
@@ -27,7 +28,19 @@ def get_engine():
     db_name     = os.getenv("DB_NAME", "weather_db")
     logger.info(f"Connecting → {db_user}@{db_host}:{db_port}/{db_name}")
     is_cloud = "neon.tech" in db_host or "amazonaws" in db_host
-    url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+
+    # Auto-detect installed PostgreSQL driver (psycopg2 vs psycopg)
+    driver = "postgresql+psycopg2"
+    try:
+        import psycopg2  # noqa: F401
+    except ImportError:
+        try:
+            import psycopg  # noqa: F401
+            driver = "postgresql+psycopg"
+        except ImportError:
+            driver = "postgresql"
+
+    url = f"{driver}://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
     if is_cloud:
         url += "?sslmode=require"
     return create_engine(url)
@@ -35,8 +48,15 @@ def get_engine():
 
 @app.errorhandler(Exception)
 def handle_exception(e):
+    if isinstance(e, HTTPException):
+        return jsonify({"error": e.description}), e.code
     logger.error(f"Unhandled error: {e}", exc_info=True)
     return jsonify({"error": str(e)}), 500
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
 
 
 # ── Routes ──────────────────────────────────────────────

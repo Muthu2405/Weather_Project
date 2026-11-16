@@ -33,7 +33,19 @@ def get_db_engine():
 
     # Use SSL for cloud databases like Neon
     is_cloud = "neon.tech" in db_host or "amazonaws" in db_host
-    connection_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+
+    # Auto-detect installed PostgreSQL driver (psycopg2 vs psycopg)
+    driver = "postgresql+psycopg2"
+    try:
+        import psycopg2  # noqa: F401
+    except ImportError:
+        try:
+            import psycopg  # noqa: F401
+            driver = "postgresql+psycopg"
+        except ImportError:
+            driver = "postgresql"
+
+    connection_url = f"{driver}://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
     if is_cloud:
         connection_url += "?sslmode=require"
 
